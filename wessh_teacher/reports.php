@@ -1,0 +1,311 @@
+<?php
+session_start();
+// TEMPORARY LOGIN BYPASS FOR DEVELOPMENT
+// Commented out original login redirect for now.
+// Original code was:
+// if (!isset($_SESSION['user_id'])) {
+//     header('Location: login.php');
+//     exit();
+// }
+$_SESSION['user_id'] = $_SESSION['user_id'] ?? 1;
+$_SESSION['user_type'] = $_SESSION['user_type'] ?? 'teacher';
+
+
+// Check if user is logged in and is a teacher
+// if (!isset($_SESSION['user_id']) || $_SESSION['user_type'] !== 'teacher') {
+//     header('Location: login.php');
+//     exit();
+// }
+
+include dirname(__DIR__) . '/includes/db.php';
+
+// Handle CSV export
+if (isset($_GET['export']) && $_GET['export'] == 'csv') {
+    try {
+        $stmt = $pdo->prepare("
+            SELECT CONCAT(u.firstname, ' ', u.lastname) as student_name, u.email, e.submission_date, e.status, e.document_path
+            FROM enrollments e
+            JOIN users u ON e.student_id = u.user_id
+            WHERE e.status = 'Approved'
+            ORDER BY e.submission_date DESC
+        ");
+        $stmt->execute();
+        $completed_enrollments = $stmt->fetchAll();
+
+        header('Content-Type: text/csv');
+        header('Content-Disposition: attachment; filename="enrollment_report.csv"');
+
+        $output = fopen('php://output', 'w');
+        fputcsv($output, ['Student Name', 'Email', 'Submission Date', 'Status', 'Document Path']);
+
+        foreach ($completed_enrollments as $enrollment) {
+            fputcsv($output, $enrollment);
+        }
+
+        fclose($output);
+        exit();
+    } catch (PDOException $e) {
+        // Handle error
+    }
+}
+
+// Fetch report data
+try {
+    // Pending enrollments for review
+    $stmt = $pdo->prepare("
+        SELECT e.enrollment_id, CONCAT(u.firstname, ' ', u.lastname) as student_name, u.email, e.submission_date, e.status, e.document_path
+        FROM enrollments e
+        JOIN users u ON e.student_id = u.user_id
+        WHERE e.status = 'Pending'
+        ORDER BY e.submission_date DESC
+    ");
+    $stmt->execute();
+    $pending_enrollments = $stmt->fetchAll();
+
+    // Status summary
+    $stmt = $pdo->prepare("SELECT LOWER(status) as status, COUNT(*) as count FROM enrollments GROUP BY LOWER(status)");
+    $stmt->execute();
+    $status_summary = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+} catch (PDOException $e) {
+    // If database error, set to empty arrays
+    $pending_enrollments = [];
+    $status_summary = ['Pending' => 0, 'Rejected' => 0, 'Approved' => 0];
+}
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="description" content="">
+    <meta name="author" content="">
+    <title>Reports - WESSH Teacher Dashboard</title>
+    <!-- Custom fonts for this template-->
+    <link href="../vendor/fontawesome-free/css/all.min.css" rel="stylesheet" type="text/css">
+    <link
+        href="https://fonts.googleapis.com/css?family=Nunito:200,200i,300,300i,400,400i,600,600i,700,700i,800,800i,900,900i"
+        rel="stylesheet">
+
+    <!-- Custom styles for this template-->
+    <link href="../css/sb-admin-2.min.css" rel="stylesheet">
+</head>
+
+<body id="page-top">
+    <!-- Page Wrapper -->
+    <div id="wrapper" class="d-flex">
+        <?php include 'teacher_sidebar.php'; ?>
+
+        <!-- Content Wrapper -->
+        <div id="content-wrapper" class="d-flex flex-column flex-grow-1">
+            <!-- Main Content -->
+            <div id="content">
+                <!-- Topbar -->
+                <nav class="navbar navbar-expand navbar-light bg-white topbar mb-4 static-top shadow">
+
+                    <!-- Sidebar Toggle (Topbar) -->
+                    <button id="sidebarToggleTop" class="btn btn-link d-md-none rounded-circle mr-3">
+                        <i class="fa fa-bars"></i>
+                    </button>
+
+                    <!-- Topbar Navbar -->
+                    <ul class="navbar-nav ml-auto">
+
+                        <!-- Nav Item - User Information -->
+                        <li class="nav-item dropdown no-arrow">
+                            <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button"
+                                data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                                <span
+                                    class="mr-2 d-none d-lg-inline text-gray-600 small"><?php echo htmlspecialchars($_SESSION['name'] ?? 'Teacher'); ?></span>
+                                <img class="img-profile rounded-circle" src="../img/undraw_profile.svg">
+                            </a>
+                            <!-- Dropdown - User Information -->
+                            <div class="dropdown-menu dropdown-menu-right shadow animated--grow-in"
+                                aria-labelledby="userDropdown">
+                                <a class="dropdown-item" href="#">
+                                    <i class="fas fa-user fa-sm fa-fw mr-2 text-gray-400"></i>
+                                    Profile
+                                </a>
+                                <a class="dropdown-item" href="#">
+                                    <i class="fas fa-cogs fa-sm fa-fw mr-2 text-gray-400"></i>
+                                    Settings
+                                </a>
+                                <a class="dropdown-item" href="#">
+                                    <i class="fas fa-list fa-sm fa-fw mr-2 text-gray-400"></i>
+                                    Activity Log
+                                </a>
+                                <div class="dropdown-divider"></div>
+                                <a class="dropdown-item" href="#" data-toggle="modal" data-target="#logoutModal">
+                                    <i class="fas fa-sign-out-alt fa-sm fa-fw mr-2 text-gray-400"></i>
+                                    Logout
+                                </a>
+                            </div>
+                        </li>
+
+                    </ul>
+
+                </nav>
+                <!-- End of Topbar -->
+
+                <!-- Begin Page Content -->
+                <div class="container-fluid">
+                    <!-- Page Heading -->
+                    <div class="d-sm-flex align-items-center justify-content-between mb-4">
+                        <h1 class="h3 mb-0 text-gray-800">Enrollment Reports</h1>
+                        <div>
+                            <a href="reports.php?export=csv" class="btn btn-success btn-sm">
+                                <i class="fas fa-download fa-sm text-white-50"></i> Export CSV
+                            </a>
+                            <a href="dashboard.php" class="btn btn-secondary btn-sm">Back to Dashboard</a>
+                        </div>
+                    </div>
+
+                    <!-- Status Summary -->
+                    <div class="row mb-4">
+                        <div class="col-lg-12">
+                            <div class="card shadow">
+                                <div class="card-header py-3">
+                                    <h6 class="m-0 font-weight-bold text-primary">Enrollment Status Summary</h6>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-sm-3">
+                                            <div class="text-center">
+                                                <h4 class="text-warning"><?php echo $status_summary['pending'] ?? 0; ?>
+                                                </h4>
+                                                <p>Pending Reviews</p>
+                                            </div>
+                                        </div>
+                                        <div class="col-sm-3">
+                                            <div class="text-center">
+                                                <h4 class="text-info">
+                                                    <?php echo $status_summary['for checking'] ?? 0; ?>
+                                                </h4>
+                                                <p>For Checking</p>
+                                            </div>
+                                        </div>
+                                        <div class="col-sm-3">
+                                            <div class="text-center">
+                                                <h4 class="text-danger">
+                                                    <?php echo $status_summary['rejected'] ?? 0; ?>
+                                                </h4>
+                                                <p>Rejected</p>
+                                            </div>
+                                        </div>
+                                        <div class="col-sm-3">
+                                            <div class="text-center">
+                                                <h4 class="text-success"><?php echo $status_summary['approved'] ?? 0; ?>
+                                                </h4>
+                                                <p>Approved</p>
+                                            </div>
+                                        </div>
+                                        <div class="col-sm-3">
+                                            <div class="text-center">
+                                                <h4 class="text-primary">
+                                                    <?php echo $status_summary['partially enrolled'] ?? 0; ?>
+                                                </h4>
+                                                <p>Partially Enrolled</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Pending Enrollments Table -->
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Pending Enrollments for Review</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-bordered" id="reportsTable" width="100%" cellspacing="0">
+                                    <thead>
+                                        <tr>
+                                            <th>Student Name</th>
+                                            <th>Email</th>
+                                            <th>Submission Date</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($pending_enrollments as $enrollment): ?>
+                                            <tr>
+                                                <td><?php echo htmlspecialchars($enrollment['student_name']); ?></td>
+                                                <td><?php echo htmlspecialchars($enrollment['email']); ?></td>
+                                                <td><?php echo htmlspecialchars($enrollment['submission_date']); ?></td>
+                                                <td>
+                                                    <span
+                                                        class="badge badge-warning"><?php echo htmlspecialchars($enrollment['status']); ?></span>
+                                                </td>
+                                                <td>
+                                                    <a href="review.php?id=<?php echo $enrollment['enrollment_id']; ?>"
+                                                        class="btn btn-primary btn-sm">Review</a>
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <!-- /.container-fluid -->
+            </div>
+            <!-- End of Main Content -->
+
+            <!-- Footer -->
+            <footer class="sticky-footer bg-white">
+                <div class="container my-auto">
+                    <div class="copyright text-center my-auto">
+                        <span>Copyright © WESSH 2024</span>
+                    </div>
+                </div>
+            </footer>
+            <!-- End of Footer -->
+        </div>
+        <!-- End of Content Wrapper -->
+    </div>
+    <!-- End of Page Wrapper -->
+
+    <!-- Scroll to Top Button-->
+    <a class="scroll-to-top rounded" href="#page-top">
+        <i class="fas fa-angle-up"></i>
+    </a>
+
+    <!-- Logout Modal-->
+    <div class="modal fade" id="logoutModal" tabindex="-1" role="dialog" aria-labelledby="exampleModalLabel"
+        aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="exampleModalLabel">Ready to Leave?</h5>
+                    <button class="close" type="button" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">×</span>
+                    </button>
+                </div>
+                <div class="modal-body">Select "Logout" below if you are ready to end your current session.</div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" type="button" data-dismiss="modal">Cancel</button>
+                    <a class="btn btn-primary" href="../logout.php">Logout</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap core JavaScript-->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- Core plugin JavaScript-->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-easing/1.4.1/jquery.easing.min.js"></script>
+
+    <!-- Custom scripts for all pages-->
+    <script src="../js/sb-admin-2.min.js"></script>
+</body>
+
+</html>
